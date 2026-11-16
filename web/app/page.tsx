@@ -16,9 +16,17 @@ import {
   Wallet,
 } from "lucide-react";
 
-const API_URL = (
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
-).replace(/\/+$/, "");
+// The backend address. NEXT_PUBLIC_API_URL overrides it; otherwise the deployed
+// site uses the hosted backend and local development uses a local one.
+const DEFAULT_API_URL =
+  process.env.NODE_ENV === "production"
+    ? "https://travel-planner-api-szfc.onrender.com"
+    : "http://localhost:8000";
+
+const API_URL = (process.env.NEXT_PUBLIC_API_URL || DEFAULT_API_URL).replace(
+  /\/+$/,
+  "",
+);
 
 const QUICK_PROMPTS = [
   "Plan a 7-day Japan trip under ₹2L",
