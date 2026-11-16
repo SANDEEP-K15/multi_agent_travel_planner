@@ -218,7 +218,6 @@ function PlanCard({
             icon={<BedDouble size={16} />}
             title="Hotels (search results)"
             text={plan.hotel_results}
-            raw
           />
           <AgentSection
             icon={<CloudSun size={16} />}

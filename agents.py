@@ -56,6 +56,45 @@ def _run_tool(coroutine, label: str):
         return f"{label} data is unavailable right now."
 
 
+def _clip(text: Any, limit: int) -> str:
+    """Cap how much of one agent's output is passed into another prompt.
+
+    Groq's free tier limits tokens per minute, and a single prompt that carries
+    every agent's full output can exceed that limit on its own.
+    """
+    text = str(text or "")
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + "\n[shortened]"
+
+
+def _format_search_results(result: Any, max_results: int = 5) -> str:
+    """Turn the Tavily MCP response into a short, readable list."""
+    lines: list[str] = []
+    blocks = result if isinstance(result, list) else [result]
+    for block in blocks:
+        text = block.get("text") if isinstance(block, dict) else None
+        if not text:
+            continue
+        try:
+            data = json.loads(text)
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        for item in (data.get("results") or [])[:max_results]:
+            if not isinstance(item, dict):
+                continue
+            title = str(item.get("title") or "Result").strip()
+            url = str(item.get("url") or "").strip()
+            snippet = " ".join(str(item.get("content") or "").split())[:320]
+            heading = f"[{title}]({url})" if url else title
+            lines.append(f"- **{heading}**: {snippet}")
+    if lines:
+        return "\n".join(lines)
+    return _clip(result, 2500)
+
+
 def _json_from_llm(text: str) -> dict:
     print("\n========== RAW LLM RESPONSE ==========")
     print(text)
@@ -327,7 +366,7 @@ def hotel_agent(state: TravelState):
     print("=========================================\n")
 
     return {
-        "hotel_results": str(result),
+        "hotel_results": _format_search_results(result),
         "messages": [AIMessage(content="Hotel agent completed.")],
     }
 
@@ -393,13 +432,13 @@ Constraints:
 {state.get('trip_constraints', {})}
 
 Flight results:
-{state.get('flight_results', '')}
+{_clip(state.get('flight_results', ''), 2500)}
 
 Hotel results:
-{state.get('hotel_results', '')}
+{_clip(state.get('hotel_results', ''), 2500)}
 
 Weather results:
-{state.get('weather_results', '')}
+{_clip(state.get('weather_results', ''), 1500)}
 
 Return a concise budget assessment with:
 1. estimated cost categories
@@ -454,16 +493,16 @@ Trip constraints:
 {state.get('trip_constraints', {})}
 
 Flight results:
-{state.get('flight_results', '')}
+{_clip(state.get('flight_results', ''), 2500)}
 
 Hotel results:
-{state.get('hotel_results', '')}
+{_clip(state.get('hotel_results', ''), 2500)}
 
 Weather results:
-{state.get('weather_results', '')}
+{_clip(state.get('weather_results', ''), 1500)}
 
 Budget results:
-{state.get('budget_results', '')}
+{_clip(state.get('budget_results', ''), 2500)}
 
 Make the output structured, practical, and ready for human review.
 """
@@ -531,10 +570,10 @@ The human approved this draft itinerary.
 Produce the final polished travel plan.
 
 Draft itinerary:
-{state['itinerary']}
+{_clip(state.get('itinerary', ''), 6000)}
 
 Budget notes:
-{state['budget_results']}
+{_clip(state.get('budget_results', ''), 2000)}
 """
     else:
         prompt = f"""
@@ -544,13 +583,13 @@ Original user request:
 {state['user_query']}
 
 Draft itinerary:
-{state['itinerary']}
+{_clip(state.get('itinerary', ''), 6000)}
 
 Human feedback:
 {state['human_feedback']}
 
 Budget notes:
-{state['budget_results']}
+{_clip(state.get('budget_results', ''), 2000)}
 """
 
     result = _llm_text(
