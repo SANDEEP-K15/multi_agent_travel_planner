@@ -1,3 +1,4 @@
+import time
 from pathlib import Path
 from typing import Any
 
@@ -66,9 +67,33 @@ _output_guard = RunnableRails(
     output_key="output",
 )
 
+# Seconds to wait before each retry when the model provider rate-limits a
+# guardrail check. The checks share the provider's per-minute token budget
+# with the agents, so a check can land just after that budget is used up.
+RATE_LIMIT_WAITS = (8, 12, 20, 25, 30)
+
+
+def _is_rate_limit(error: Exception) -> bool:
+    text = str(error).lower()
+    return "429" in text or "rate limit" in text or "rate_limit" in text
+
+
+def _invoke_with_retry(guard: RunnableRails, payload: Any) -> Any:
+    """Run a guardrail check, waiting out provider rate limits."""
+    for wait in RATE_LIMIT_WAITS:
+        try:
+            return guard.invoke(payload)
+        except Exception as error:
+            if not _is_rate_limit(error):
+                raise
+            print(f"Guardrail check was rate-limited; retrying in {wait}s")
+            time.sleep(wait)
+    return guard.invoke(payload)
+
+
 @traceable(name="nemo-input-guardrail", run_type="chain")
 def check_user_input(user_input: str) -> tuple[bool, str]:
-    result = _input_guard.invoke(user_input)
+    result = _invoke_with_retry(_input_guard, user_input)
     text = _extract_text(result)
 
     if text == INPUT_ALLOWED:
@@ -78,11 +103,12 @@ def check_user_input(user_input: str) -> tuple[bool, str]:
 
 @traceable(name="nemo-output-guardrail", run_type="chain")
 def filter_final_output(user_input: str, candidate: str) -> str:
-    result = _output_guard.invoke(
+    result = _invoke_with_retry(
+        _output_guard,
         {
             "input": user_input,
             "candidate": candidate,
-        }
+        },
     )
 
     return _extract_text(result)
