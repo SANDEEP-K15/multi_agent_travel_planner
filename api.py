@@ -155,10 +155,17 @@ def approve(request: ApprovalRequest) -> dict[str, Any]:
             detail="This plan is no longer waiting for approval. Start a new trip.",
         )
 
-    result = _run(
-        Command(resume={"approved": request.approved, "feedback": request.feedback}),
-        config,
+    # Normally the thread is paused at the approval interrupt and we resume it
+    # with the human's answer. If an earlier attempt already recorded the answer
+    # and then failed (for example on a model rate limit), there is no interrupt
+    # left, so continue the thread from where it stopped instead.
+    waiting_for_human = any(task.interrupts for task in snapshot.tasks)
+    payload = (
+        Command(resume={"approved": request.approved, "feedback": request.feedback})
+        if waiting_for_human
+        else None
     )
+    result = _run(payload, config)
     return _payload(request.thread_id, result)
 
 
