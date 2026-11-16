@@ -11,8 +11,11 @@ from langsmith import traceable
 load_dotenv(override=True)
 PROJECT_DIR = Path(__file__).resolve().parent
 PYTHON_EXECUTABLE = sys.executable
+AVIATIONSTACK_SRC = str(PROJECT_DIR / "aviationstack-mcp" / "src")
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
-AVIATION_STACK_API_KEY = os.getenv("AVIATIONSTACK_API_KEY")
+AVIATION_STACK_API_KEY = (
+    os.getenv("AVIATIONSTACK_API_KEY") or os.getenv("AVIATION_STACK_API_KEY")
+)
 
 OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY")
 
@@ -34,7 +37,12 @@ client = MultiServerMCPClient(
             ],
             "env": {
                 **os.environ,
-                "AVIATION_STACK_API_KEY": AVIATION_STACK_API_KEY or ""
+                "AVIATION_STACK_API_KEY": AVIATION_STACK_API_KEY or "",
+                # Run the bundled server straight from its source folder, so
+                # it does not have to be pip-installed on the host.
+                "PYTHONPATH": os.pathsep.join(
+                    filter(None, [AVIATIONSTACK_SRC, os.environ.get("PYTHONPATH")])
+                ),
             }
         },
 

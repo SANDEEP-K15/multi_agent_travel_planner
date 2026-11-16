@@ -1,5 +1,6 @@
 import psycopg
 from psycopg.rows import dict_row
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.checkpoint.postgres import PostgresSaver
 from langgraph.graph import END, START, StateGraph
 
@@ -113,7 +114,11 @@ def build_graph():
         checkpointer.setup()
         return graph.compile(checkpointer=checkpointer)
 
-    return graph.compile()
+    # No database configured: keep checkpoints in memory. The human-approval
+    # step needs a checkpointer to pause and resume, and a single long-running
+    # process (local run, Streamlit Community Cloud) can hold them in memory.
+    # Threads are lost when the process restarts.
+    return graph.compile(checkpointer=InMemorySaver())
 
 
 app = build_graph()
