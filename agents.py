@@ -29,6 +29,33 @@ def _llm_text(system: str, prompt: str) -> str:
     )
     return response.content
 
+ALL_AGENTS = [
+    "flight_agent",
+    "hotel_agent",
+    "weather_agent",
+    "budget_agent",
+    "itinerary_agent",
+]
+
+EMPTY_CONSTRAINTS = {
+    "destination": "",
+    "origin": "",
+    "duration": "",
+    "budget": "",
+    "travel_style": "",
+    "special_preferences": [],
+}
+
+
+def _run_tool(coroutine, label: str):
+    """Run an MCP tool call; a failed tool must not fail the whole plan."""
+    try:
+        return asyncio.run(coroutine)
+    except Exception as exc:
+        print(f"[{label}] tool call failed: {type(exc).__name__}: {exc}")
+        return f"{label} data is unavailable right now."
+
+
 def _json_from_llm(text: str) -> dict:
     print("\n========== RAW LLM RESPONSE ==========")
     print(text)
@@ -111,9 +138,14 @@ User request:
     print(raw)
     print("======================================\n")
 
-    parsed = _json_from_llm(raw)
-   
-    #parsed = json.loads(raw)
+    # The model sometimes omits a field or returns invalid JSON. Fall back to
+    # running every agent rather than failing the request.
+    try:
+        parsed = _json_from_llm(raw)
+    except (ValueError, json.JSONDecodeError):
+        parsed = {}
+    if not isinstance(parsed, dict):
+        parsed = {}
     
     print("\n========== PARSED JSON ==========")
     print(json.dumps(parsed, indent=2))
@@ -136,12 +168,20 @@ User request:
     Yes, you can get output from a string, but it's much harder and less reliable.
     '''
     
-    selected = parsed["selected_agents"]    
+    selected = parsed.get("selected_agents")
+    if not isinstance(selected, list):
+        selected = []
+    selected = [agent for agent in selected if agent in ALL_AGENTS] or list(ALL_AGENTS)
+
+    constraints = parsed.get("trip_constraints")
+    if not isinstance(constraints, dict):
+        constraints = {}
+    constraints = {**EMPTY_CONSTRAINTS, **constraints}
 
     return {
         "selected_agents": selected,
-        "trip_constraints": parsed["trip_constraints"],
-        "supervisor_reasoning": parsed["reasoning"],
+        "trip_constraints": constraints,
+        "supervisor_reasoning": str(parsed.get("reasoning") or ""),
         "messages": [AIMessage(content="Supervisor created the agent plan.")],
         "llm_calls": state.get("llm_calls", 0) + 1,
     }
@@ -216,16 +256,16 @@ User request:
 
 def flight_agent(state: TravelState):
     query = state["user_query"]
-    constraints = state["trip_constraints"]
-    destination = constraints["destination"]
+    constraints = state.get("trip_constraints") or {}
+    destination = constraints.get("destination", "")
 
     print("\n========== FLIGHT AGENT INPUT ==========")
     print("Query:", query)
     print("Constraints:", constraints)
     print("========================================\n")
 
-    airports = asyncio.run(list_airports())
-    airlines = asyncio.run(list_airlines())
+    airports = _run_tool(list_airports(), "Airport")
+    airlines = _run_tool(list_airlines(), "Airline")
 
     print("\n========== AIRPORT MCP DATA ==========")
     print(airports)
@@ -280,7 +320,7 @@ def hotel_agent(state: TravelState):
     print(query)
     print("=======================================\n")
 
-    result = asyncio.run(tavily_search(query))
+    result = _run_tool(tavily_search(query), "Hotel search")
 
     print("\n========== HOTEL SEARCH RESULT ==========")
     print(result)
@@ -293,15 +333,15 @@ def hotel_agent(state: TravelState):
 
 
 def weather_agent(state: TravelState):
-    constraints = state["trip_constraints"]
-    city = constraints["destination"]
+    constraints = state.get("trip_constraints") or {}
+    city = constraints.get("destination", "")
 
     print("\n========== WEATHER AGENT INPUT ==========")
     print("City:", city)
     print("=========================================\n")
 
-    weather_data = asyncio.run(current_weather(city))
-    forecast_data = asyncio.run(forecast(city))
+    weather_data = _run_tool(current_weather(city), "Current weather")
+    forecast_data = _run_tool(forecast(city), "Weather forecast")
 
     print("\n========== CURRENT WEATHER ==========")
     print(weather_data)
